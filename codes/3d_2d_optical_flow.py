@@ -44,6 +44,18 @@ cur_t = np.zeros((3, 1))
 
 trajectory = []
 
+# Kalman filter initialization
+x = np.array([[0], [0], [0], [0]])  # state: x_pos, z_pos, x_vel, z_vel
+P = np.eye(4) * 100  # covariance matrix
+F = np.array([[1, 0, 1, 0],  # state transition matrix (assuming dt=1)
+              [0, 1, 0, 1],
+              [0, 0, 1, 0],
+              [0, 0, 0, 1]])
+H = np.array([[1, 0, 0, 0],  # measurement matrix (we observe position only)
+              [0, 1, 0, 0]])
+R_kf = np.eye(2) * 0.01  # measurement noise covariance (tune as needed)
+Q = np.eye(4) * 0.001  # process noise covariance (tune as needed)
+
 # Detect initial features
 feature_params = dict(maxCorners=1000, qualityLevel=0.01, minDistance=8)
 p0 = cv2.goodFeaturesToTrack(images[0], mask=None, **feature_params)
@@ -61,11 +73,25 @@ for i in range(1, len(images)):
     E, mask = cv2.findEssentialMat(good_p1, good_p0, K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
     _, R, t, mask_pose = cv2.recoverPose(E, good_p1, good_p0, K)
 
-    # Update pose
+    # Update pose estimate
     cur_t += cur_R @ t
     cur_R = R @ cur_R
 
-    trajectory.append((cur_t[0][0], cur_t[2][0]))
+    # Kalman Filter predict
+    x_pred = F @ x
+    P_pred = F @ P @ F.T + Q
+
+    # Measurement z = current noisy position (x, z)
+    z = np.array([[cur_t[0][0]], [cur_t[2][0]]])
+
+    # Kalman update
+    y = z - H @ x_pred
+    S = H @ P_pred @ H.T + R_kf
+    K_gain = P_pred @ H.T @ np.linalg.inv(S)
+    x = x_pred + K_gain @ y
+    P = (np.eye(4) - K_gain @ H) @ P_pred
+
+    trajectory.append((x[0][0], x[1][0]))
 
     # Redetect features if too few
     if len(good_p1) < 200:
@@ -76,10 +102,10 @@ for i in range(1, len(images)):
 # ==== PLOT ====
 xs, zs = zip(*trajectory)
 plt.figure()
-plt.plot(xs, zs, color='green', label='Estimated trajectory')
+plt.plot(xs, zs, color='green', label='Kalman Filtered Trajectory')
 plt.xlabel('x')
 plt.ylabel('z')
-plt.title('3D-2D Optical Flow Visual Odometry (CARLA Intrinsics)')
+plt.title('3D-2D Optical Flow Visual Odometry with Kalman Filter')
 plt.legend()
 plt.grid(True)
 plt.show()
